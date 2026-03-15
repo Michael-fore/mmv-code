@@ -11,6 +11,10 @@ from .gcs import (
     upload_to_gcs,
     upload_directory_to_gcs,
 )
+from .graphcast import (
+    fetch_graphcast_forecast,
+    fetch_graphcast_historical,
+)
 
 __all__ = [
     "tag_provenance",
@@ -18,4 +22,6 @@ __all__ = [
     "is_duplicate",
     "upload_to_gcs",
     "upload_directory_to_gcs",
+    "fetch_graphcast_forecast",
+    "fetch_graphcast_historical",
 ]
