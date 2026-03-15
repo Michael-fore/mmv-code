@@ -15,11 +15,13 @@ description: Core architecture rules and constraints for the MMV platform
 - **Long-running tasks**: For potentially long-running jobs (multi-step LLM chains, batch processing, large data pipelines), use **Cloud Run Jobs** instead of Cloud Functions.
 
 ## Data & OLAP
-- **BigQuery is expensive** — evaluate cheaper alternatives first:
-  - AlloyDB (columnar engine for analytics)
-  - Self-hosted ClickHouse on GCE
-  - BigQuery on-demand only if query volume is low
-- Choose the right tool based on query patterns and cost.
+- **Primary database: Cloud SQL PostgreSQL** (managed, serverless-friendly).
+  - Each data source gets its own flat table.
+  - Always query the data to understand its shape before building.
+- **Raw data**: Always land in GCS first, then load into PostgreSQL.
+- **No API keys**: Use public data sources with downloadable CSVs / scrapeable pages.
+- **ClickHouse on GCE**: Available for heavy analytics later (scripts in `mmv-infra/clickhouse/`).
+- **BigQuery**: Avoid unless query volume is very low.
 
 ## API & Function Design
 - **Composable primitives**: Distinct, atomic actions should be standalone functions/endpoints.
