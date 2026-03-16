@@ -1,0 +1,18 @@
+[submodule "mmv-agent"]
+	path = mmv-agent
+	url = https://github.com/Michael-fore/mmv-agent.git
+[submodule "mmv-data"]
+	path = mmv-data
+	url = https://github.com/Michael-fore/mmv-data.git
+[submodule "mmv-front"]
+	path = mmv-front
+	url = https://github.com/Michael-fore/mmv-front.git
+[submodule "mmv-infra"]
+	path = mmv-infra
+	url = https://github.com/Michael-fore/mmv-infra.git
+[submodule "mmv-reporting"]
+	path = mmv-reporting
+	url = https://github.com/Michael-fore/mmv-reporting.git
+[submodule "mmv-underwriting"]
+	path = mmv-underwriting
+	url = https://github.com/Michael-fore/mmv-underwriting.git
