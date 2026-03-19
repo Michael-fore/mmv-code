@@ -1,0 +1,64 @@
+name: MMV Docs + Manifest Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    name: Check tool manifests and doc references
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Count tool manifests
+        id: manifest_count
+        run: |
+          COUNT=$(find . -name "*.tool.json" \
+            --exclude-dir=".git" \
+            --exclude-dir="node_modules" \
+            | wc -l | tr -d ' ')
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+          echo "Found $COUNT .tool.json manifests"
+
+      - name: Fail if manifests dropped below threshold
+        run: |
+          COUNT=${{ steps.manifest_count.outputs.count }}
+          THRESHOLD=20
+          if [ "$COUNT" -lt "$THRESHOLD" ]; then
+            echo "❌ Only $COUNT .tool.json manifests found — expected at least $THRESHOLD"
+            echo "A manifest may have been deleted or moved out of the canonical path."
+            exit 1
+          fi
+          echo "✅ $COUNT manifests — above threshold of $THRESHOLD"
+
+      - name: Check no plaintext credentials in tracked docs
+        run: |
+          # Scan for patterns that look like hardcoded passwords in docs/configs
+          if grep -r "MMV-agent-" \
+            --include="*.md" \
+            --include="*.yml" \
+            --include="*.yaml" \
+            --include="*.json" \
+            --include="*.js" \
+            --include="*.py" \
+            --include="*.sh" \
+            --exclude-dir=".git" \
+            --exclude-dir="node_modules" \
+            .; then
+            echo "❌ Found what looks like a hardcoded credential — check the files above"
+            exit 1
+          fi
+          echo "✅ No hardcoded credentials found"
+
+      - name: Verify canonical manifest location documented
+        run: |
+          if ! grep -q "pipelines/tools/manifests" .agent/workflows/sync-tools.md; then
+            echo "❌ sync-tools.md does not reference the canonical manifest path"
+            exit 1
+          fi
+          echo "✅ Canonical manifest path documented in sync-tools.md"

@@ -11,7 +11,7 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 # Each repo's root contains a tools/ package. We add each root to sys.path
 # but also add the tools dir directly as a fallback since modules do
 # `from provenance import tag_provenance` within the same package.
-for repo in ["mmv-data", "mmv-agent", "mmv-reporting"]:
+for repo in ["mmv-data", "mmv-agent", "mmv-reporting", "mmv-underwriting"]:
     repo_path = os.path.join(BASE, repo)
     tools_path = os.path.join(repo_path, "tools")
     for p in [repo_path, tools_path]:
@@ -156,31 +156,43 @@ SAMPLE_UNDERWRITING = {
     "sections": {
         "land_values": {
             "nominal_cagr_pct": 5.2, "real_cagr_pct": 2.1,
-            "annual_volatility_pct": 3.8,
-            "first_year": 2018, "last_year": 2023,
-            "first_value": 2500, "last_value": 3400,
+            "volatility_pct": 3.8,
+            "period": "2018-2023",
+            "start_value": 2500, "end_value": 3400,
             "yoy_changes": [{"year": 2023, "change_pct": 6.3}],
         },
         "cap_rate": {
             "latest": {"year": 2023, "cap_rate_pct": 4.18},
-            "benchmark_comparison": {"vs_10y": {"label": "vs 10Y Treasury", "spread_bps": -7}},
+            "benchmark_comparison": {
+                "farmland_cap_rate_pct": 4.18,
+                "comparisons": {
+                    "10yr_treasury": {"label": "10-Year Treasury", "spread_vs_midpoint_bps": -7, "assessment": "below"},
+                },
+                "summary": "Farmland at 4.18% is competitive with CRE",
+            },
             "time_series": [{"year": 2023, "cap_rate_pct": 4.18}],
         },
         "risk": {
             "composite_score": 28, "risk_tier": "LOW",
-            "factors": {"rates": {"label": "Interest Rates", "score": 45, "weight": 0.25, "data_gap": False}},
+            "factors": {"interest_rate_shock": {"label": "Interest Rate Shock", "score": 45, "data_gap": False}},
         },
         "crop_economics": {
-            "diversification_hhi": 0.32,
-            "crop_stability": {"CORN": {"cv": 0.08}, "COTTON": {"cv": 0.35}},
-            "rent_trend": "+2.3% annual growth",
+            "diversification": {"hhi": 3200, "assessment": "moderately concentrated"},
+            "crop_details": {
+                "CORN": {"coefficient_of_variation": 8.0, "stability": "stable"},
+                "COTTON": {"coefficient_of_variation": 35.0, "stability": "volatile"},
+            },
+            "rent_analysis": {"latest_rent_per_acre": 142, "rent_trend_pct": 9.2, "rent_stability": "rising"},
         },
         "exit_optionality": {
             "exit_tier": "STRONG", "composite_score": 78,
-            "components": {"solar": {"score": 85, "detail": "TX solar 600%+ growth"}},
+            "path_scores": {"solar": 85, "development": 50, "conservation": 30},
+            "details": {
+                "solar": {"assessment": "TX solar 600%+ growth"},
+            },
         },
     },
-    "data_gaps": ["Risk: Farm Debt data gap"],
+    "data_gaps": ["Risk: Leverage data gap"],
     "data_completeness": "5/5",
 }
 
@@ -232,7 +244,7 @@ def test_report_has_data_gaps():
     from markdown_report import generate_report
     md = generate_report(SAMPLE_UNDERWRITING)
     assert "Data Gaps" in md
-    assert "Farm Debt" in md
+    assert "Leverage" in md
     return True
 
 def test_report_has_reproducibility():
@@ -428,8 +440,8 @@ def test_llm_deterministic_land_values():
     from llm_analyst import analyze_section
     result = analyze_section("land_values", {
         "nominal_cagr_pct": 5.2, "real_cagr_pct": 2.1,
-        "annual_volatility_pct": 3.8,
-        "first_value": 2500, "last_value": 3400,
+        "volatility_pct": 3.8,
+        "start_value": 2500, "end_value": 3400,
     }, force_deterministic=True)
     assert result["analysis_method"] == "deterministic"
     assert len(result["findings"]) >= 3, f"Expected >=3 findings, got {len(result['findings'])}"
@@ -442,7 +454,10 @@ def test_llm_deterministic_cap_rate():
     from llm_analyst import analyze_section
     result = analyze_section("cap_rate", {
         "latest": {"cap_rate_pct": 2.5},
-        "benchmark_comparison": {"vs_10y": {"label": "vs 10Y", "spread_bps": -50}},
+        "benchmark_comparison": {
+            "farmland_cap_rate_pct": 2.5,
+            "comparisons": {"10yr_treasury": {"label": "10-Year Treasury", "spread_vs_midpoint_bps": -50, "assessment": "below"}},
+        },
     }, force_deterministic=True)
     assert len(result["findings"]) >= 2
     return True
@@ -452,19 +467,22 @@ def test_llm_deterministic_risk():
     result = analyze_section("risk", {
         "composite_score": 72, "risk_tier": "HIGH",
         "factors": {
-            "rates": {"label": "Interest Rates", "score": 80, "weight": 0.25, "data_gap": False},
-            "debt": {"label": "Farm Debt", "score": 65, "weight": 0.20, "data_gap": True},
+            "interest_rate_shock": {"label": "Interest Rate Shock", "score": 80, "data_gap": False},
+            "leverage": {"label": "Leverage", "score": 65, "data_gap": True},
         },
     }, force_deterministic=True)
-    assert len(result["data_gaps"]) >= 1, "Should flag data gap for debt"
+    assert len(result["data_gaps"]) >= 1, "Should flag data gap for leverage"
     assert len(result["risk_flags"]) >= 1, "Should flag elevated rates"
     return True
 
 def test_llm_deterministic_crops():
     from llm_analyst import analyze_section
     result = analyze_section("crop_economics", {
-        "diversification_hhi": 0.18,
-        "crop_stability": {"CORN": {"cv": 0.08}, "WHEAT": {"cv": 0.12}},
+        "diversification": {"hhi": 1200, "assessment": "well-diversified"},
+        "crop_details": {
+            "CORN": {"coefficient_of_variation": 8.0, "stability": "stable"},
+            "WHEAT": {"coefficient_of_variation": 12.0, "stability": "moderate"},
+        },
     }, force_deterministic=True)
     assert len(result["findings"]) >= 3
     return True
@@ -473,7 +491,8 @@ def test_llm_deterministic_exit():
     from llm_analyst import analyze_section
     result = analyze_section("exit_optionality", {
         "exit_tier": "STRONG", "composite_score": 78,
-        "components": {"solar": {"score": 85, "detail": "Growth 600%+"}},
+        "path_scores": {"solar": 85, "development": 50, "conservation": 30},
+        "details": {"solar": {"assessment": "Growth 600%+"}},
     }, force_deterministic=True)
     assert len(result["findings"]) >= 1
     return True
@@ -481,8 +500,8 @@ def test_llm_deterministic_exit():
 def test_llm_finding_schema():
     from llm_analyst import analyze_section
     result = analyze_section("land_values", {
-        "nominal_cagr_pct": 5.2, "annual_volatility_pct": 3.8,
-        "first_value": 2500, "last_value": 3400,
+        "nominal_cagr_pct": 5.2, "volatility_pct": 3.8,
+        "start_value": 2500, "end_value": 3400,
     }, force_deterministic=True)
     required = {"statement", "type", "confidence", "confidence_reason", "source_citation", "data_reference"}
     for finding in result["findings"]:
@@ -496,9 +515,9 @@ def test_llm_synthesis():
     from llm_analyst import analyze_section, synthesize_report
     sections = {}
     for name, data in [
-        ("land_values", {"nominal_cagr_pct": 5.2, "annual_volatility_pct": 3.8, "first_value": 2500, "last_value": 3400}),
+        ("land_values", {"nominal_cagr_pct": 5.2, "volatility_pct": 3.8, "start_value": 2500, "end_value": 3400}),
         ("risk", {"composite_score": 28, "risk_tier": "LOW", "factors": {}}),
-        ("exit_optionality", {"exit_tier": "STRONG", "composite_score": 78, "components": {}}),
+        ("exit_optionality", {"exit_tier": "STRONG", "composite_score": 78, "path_scores": {}, "details": {}}),
     ]:
         sections[name] = analyze_section(name, data, force_deterministic=True)
     
@@ -517,12 +536,12 @@ def test_llm_unknown_section():
     return True
 
 def test_llm_none_values():
-    """Regression: land_values with None first_value/last_value should not crash."""
+    """Regression: land_values with None start_value/end_value should not crash."""
     from llm_analyst import analyze_section
     result = analyze_section("land_values", {
         "nominal_cagr_pct": 3.5,
-        "first_value": None,
-        "last_value": None,
+        "start_value": None,
+        "end_value": None,
     }, force_deterministic=True)
     assert result["analysis_method"] == "deterministic"
     assert len(result["findings"]) >= 1
@@ -538,6 +557,407 @@ test("All findings match SECTION_SCHEMA", test_llm_finding_schema)
 test("Cross-section synthesis produces recommendation", test_llm_synthesis)
 test("Unknown section handled gracefully", test_llm_unknown_section)
 test("Regression: None values in land_values", test_llm_none_values)
+
+
+# ════════════════════════════════════════════════════════════════
+# TASK 7: Underwriting Analysis
+# ════════════════════════════════════════════════════════════════
+print("\n" + "═"*60)
+print("  TASK 7: Underwriting Analysis")
+print("═"*60)
+
+# --- Imports ---
+def test_land_values_import():
+    from land_values import analyze_land_values, summarize_trend, calculate_cagr
+    return True
+
+def test_cap_rate_import():
+    from cap_rate import calculate_cap_rate, calculate_cap_rate_series, compare_to_benchmarks
+    return True
+
+def test_risk_scoring_import():
+    from risk_scoring import score_risk, macro_risk_assessment
+    return True
+
+def test_crop_economics_import():
+    from crop_economics import crop_economics_report
+    return True
+
+def test_exit_analysis_import():
+    from exit_analysis import solar_exit_analysis, development_exit_analysis, exit_optionality_score
+    return True
+
+def test_underwrite_import():
+    from underwrite import underwrite_deal
+    return True
+
+test("land_values module imports", test_land_values_import)
+test("cap_rate module imports", test_cap_rate_import)
+test("risk_scoring module imports", test_risk_scoring_import)
+test("crop_economics module imports", test_crop_economics_import)
+test("exit_analysis module imports", test_exit_analysis_import)
+test("underwrite orchestrator imports", test_underwrite_import)
+
+# --- Shared test fixtures ---
+UW_LAND = [
+    {"year": 2018, "value_per_acre": 2500, "state": "TX", "land_type": "CROPLAND"},
+    {"year": 2019, "value_per_acre": 2600, "state": "TX", "land_type": "CROPLAND"},
+    {"year": 2020, "value_per_acre": 2700, "state": "TX", "land_type": "CROPLAND"},
+    {"year": 2021, "value_per_acre": 2900, "state": "TX", "land_type": "CROPLAND"},
+    {"year": 2022, "value_per_acre": 3200, "state": "TX", "land_type": "CROPLAND"},
+    {"year": 2023, "value_per_acre": 3400, "state": "TX", "land_type": "CROPLAND"},
+]
+UW_RENTS = [
+    {"year": 2018, "rent_per_acre": 125},
+    {"year": 2019, "rent_per_acre": 128},
+    {"year": 2020, "rent_per_acre": 130},
+    {"year": 2021, "rent_per_acre": 135},
+    {"year": 2022, "rent_per_acre": 140},
+    {"year": 2023, "rent_per_acre": 142},
+]
+UW_CROPS = [
+    {"year": 2020, "crop": "CORN", "production": 800000000, "unit": "BU", "state": "TX"},
+    {"year": 2021, "crop": "CORN", "production": 750000000, "unit": "BU", "state": "TX"},
+    {"year": 2022, "crop": "CORN", "production": 900000000, "unit": "BU", "state": "TX"},
+    {"year": 2023, "crop": "CORN", "production": 850000000, "unit": "BU", "state": "TX"},
+    {"year": 2020, "crop": "COTTON", "production": 6000000, "unit": "BALES", "state": "TX"},
+    {"year": 2021, "crop": "COTTON", "production": 7500000, "unit": "BALES", "state": "TX"},
+    {"year": 2022, "crop": "COTTON", "production": 3500000, "unit": "BALES", "state": "TX"},
+    {"year": 2023, "crop": "COTTON", "production": 5800000, "unit": "BALES", "state": "TX"},
+]
+UW_FRED = {
+    "FEDFUNDS": [
+        {"observation_date": "2025-01-01", "value": 4.33},
+        {"observation_date": "2024-01-01", "value": 5.33},
+    ],
+    "CPIAUCSL": [
+        {"observation_date": "2025-06-01", "value": 315.0},
+        {"observation_date": "2024-06-01", "value": 305.0},
+    ],
+    "DTWEXBGS": [
+        {"observation_date": "2025-06-01", "value": 128.0},
+        {"observation_date": "2024-06-01", "value": 125.0},
+    ],
+    "FBDTLA": [
+        {"observation_date": "2025-01-01", "value": 520000},
+        {"observation_date": "2020-01-01", "value": 430000},
+    ],
+    "DGS10": [
+        {"observation_date": "2025-06-01", "value": 4.25},
+    ],
+}
+UW_EIA = [
+    {"period": "2019", "state": "TX", "generation_mwh": 5000000, "fuel_type": "Solar"},
+    {"period": "2020", "state": "TX", "generation_mwh": 8000000, "fuel_type": "Solar"},
+    {"period": "2021", "state": "TX", "generation_mwh": 15000000, "fuel_type": "Solar"},
+    {"period": "2022", "state": "TX", "generation_mwh": 25000000, "fuel_type": "Solar"},
+    {"period": "2023", "state": "TX", "generation_mwh": 35000000, "fuel_type": "Solar"},
+]
+
+# --- Land Values unit tests ---
+def test_lv_cagr_calculation():
+    from land_values import calculate_cagr
+    cagr = calculate_cagr(2500, 3400, 5)
+    assert cagr is not None
+    assert abs(cagr - 0.0634) < 0.001, f"Expected ~6.34% CAGR, got {cagr*100:.2f}%"
+    return True
+
+def test_lv_cagr_edge_cases():
+    from land_values import calculate_cagr
+    assert calculate_cagr(0, 100, 5) is None, "Zero start should return None"
+    assert calculate_cagr(100, 0, 5) is None, "Zero end should return None"
+    assert calculate_cagr(100, 200, 0) is None, "Zero years should return None"
+    assert calculate_cagr(-100, 200, 5) is None, "Negative start should return None"
+    return True
+
+def test_lv_analyze_full():
+    from land_values import analyze_land_values
+    result = analyze_land_values(UW_LAND)
+    assert "error" not in result
+    assert result["state"] == "TX"
+    assert result["period"] == "2018-2023"
+    assert result["start_value"] == 2500
+    assert result["end_value"] == 3400
+    assert result["nominal_cagr_pct"] is not None
+    assert result["nominal_cagr_pct"] > 0, "Should show positive CAGR"
+    assert result["volatility_pct"] is not None
+    assert result["num_observations"] == 6
+    assert len(result["yoy_changes"]) == 5
+    return True
+
+def test_lv_analyze_empty():
+    from land_values import analyze_land_values
+    result = analyze_land_values([])
+    assert "error" in result
+    return True
+
+def test_lv_analyze_single_point():
+    from land_values import analyze_land_values
+    result = analyze_land_values([{"year": 2023, "value_per_acre": 3400, "state": "TX"}])
+    assert "error" not in result
+    assert result["nominal_cagr"] is None  # Can't compute CAGR with 1 point
+    assert result["num_observations"] == 1
+    return True
+
+def test_lv_real_return_with_cpi():
+    from land_values import analyze_land_values
+    cpi = [
+        {"observation_date": "2018-06-01", "value": 251.0},
+        {"observation_date": "2023-06-01", "value": 304.0},
+    ]
+    result = analyze_land_values(UW_LAND, cpi_data=cpi)
+    assert result["real_cagr_pct"] is not None
+    assert result["real_cagr_pct"] < result["nominal_cagr_pct"], "Real return should be lower than nominal"
+    return True
+
+def test_lv_summarize_trend():
+    from land_values import analyze_land_values, summarize_trend
+    analysis = analyze_land_values(UW_LAND)
+    summary = summarize_trend(analysis)
+    assert "TX" in summary
+    assert "CAGR" in summary
+    assert "$3,400/acre" in summary
+    return True
+
+test("CAGR: 2500→3400 over 5yr ≈ 6.3%", test_lv_cagr_calculation)
+test("CAGR: edge cases (zero, negative)", test_lv_cagr_edge_cases)
+test("Land values: full analysis structure", test_lv_analyze_full)
+test("Land values: empty input → error dict", test_lv_analyze_empty)
+test("Land values: single point → no crash", test_lv_analyze_single_point)
+test("Land values: real return with CPI", test_lv_real_return_with_cpi)
+test("Land values: summarize_trend output", test_lv_summarize_trend)
+
+# --- Cap Rate unit tests ---
+def test_cr_basic():
+    from cap_rate import calculate_cap_rate
+    result = calculate_cap_rate(3400, 142)
+    assert result["cap_rate_pct"] is not None
+    assert abs(result["cap_rate_pct"] - 4.18) < 0.1, f"Expected ~4.18%, got {result['cap_rate_pct']}"
+    return True
+
+def test_cr_zero_land_value():
+    from cap_rate import calculate_cap_rate
+    result = calculate_cap_rate(0, 142)
+    assert result["cap_rate"] is None
+    assert "error" in result
+    return True
+
+def test_cr_time_series():
+    from cap_rate import calculate_cap_rate_series
+    series = calculate_cap_rate_series(UW_LAND, UW_RENTS)
+    assert len(series) == 6, f"Expected 6 years matched, got {len(series)}"
+    assert series[0]["year"] == 2018
+    assert series[-1]["year"] == 2023
+    for entry in series:
+        assert entry["cap_rate_pct"] > 0
+    return True
+
+def test_cr_time_series_no_overlap():
+    from cap_rate import calculate_cap_rate_series
+    future_rents = [{"year": 2030, "rent_per_acre": 200}]
+    series = calculate_cap_rate_series(UW_LAND, future_rents)
+    assert len(series) == 0, "No year overlap should produce empty series"
+    return True
+
+def test_cr_benchmarks():
+    from cap_rate import compare_to_benchmarks
+    result = compare_to_benchmarks(4.18)
+    assert "comparisons" in result
+    assert "summary" in result
+    assert len(result["comparisons"]) == 5  # office, retail, industrial, multifamily, 10yr
+    for comp in result["comparisons"].values():
+        assert comp["assessment"] in ("above", "below", "in-line")
+    return True
+
+test("Cap rate: 142/3400 ≈ 4.18%", test_cr_basic)
+test("Cap rate: zero land value → error", test_cr_zero_land_value)
+test("Cap rate: time series join (6 years)", test_cr_time_series)
+test("Cap rate: no year overlap → empty", test_cr_time_series_no_overlap)
+test("Cap rate: benchmark comparison structure", test_cr_benchmarks)
+
+# --- Risk Scoring unit tests ---
+def test_risk_composite():
+    from risk_scoring import score_risk
+    result = score_risk(UW_FRED)
+    assert "composite_score" in result
+    assert 0 <= result["composite_score"] <= 100
+    assert result["risk_tier"] in ("LOW", "MODERATE", "HIGH")
+    assert len(result["factors"]) == 6
+    return True
+
+def test_risk_empty_fred():
+    from risk_scoring import score_risk
+    result = score_risk({})
+    assert result["risk_tier"] in ("LOW", "MODERATE", "HIGH")
+    gaps = [f["label"] for f in result["factors"].values() if f.get("data_gap")]
+    assert len(gaps) >= 4, f"Expected >=4 data gaps with empty FRED, got {len(gaps)}"
+    return True
+
+def test_risk_high_rates():
+    from risk_scoring import score_risk
+    crisis_fred = {
+        "FEDFUNDS": [
+            {"observation_date": "2025-01-01", "value": 15.0},
+            {"observation_date": "2024-01-01", "value": 8.0},
+        ],
+        "CPIAUCSL": [
+            {"observation_date": "2025-06-01", "value": 360.0},
+            {"observation_date": "2024-06-01", "value": 305.0},
+        ],
+        "DTWEXBGS": [
+            {"observation_date": "2025-06-01", "value": 155.0},
+            {"observation_date": "2024-06-01", "value": 125.0},
+        ],
+        "FBDTLA": [
+            {"observation_date": "2025-01-01", "value": 700000},
+            {"observation_date": "2020-01-01", "value": 430000},
+        ],
+        "DGS10": [{"observation_date": "2025-06-01", "value": 6.0}],
+    }
+    result = score_risk(crisis_fred)
+    assert result["composite_score"] > 55, f"Crisis conditions should score high, got {result['composite_score']}"
+    return True
+
+def test_risk_data_gap_flags():
+    from risk_scoring import score_risk
+    partial_fred = {"FEDFUNDS": UW_FRED["FEDFUNDS"]}  # Only one series
+    result = score_risk(partial_fred)
+    gap_labels = [f["label"] for f in result["factors"].values() if f.get("data_gap")]
+    assert "Trade Disruption" in gap_labels, "Trade disruption always flagged as data gap"
+    return True
+
+test("Risk scoring: composite 0-100 with tier", test_risk_composite)
+test("Risk scoring: empty FRED → all data gaps", test_risk_empty_fred)
+test("Risk scoring: crisis conditions → high score", test_risk_high_rates)
+test("Risk scoring: data gap flag detection", test_risk_data_gap_flags)
+
+# --- Crop Economics unit tests ---
+def test_crop_econ_full():
+    from crop_economics import crop_economics_report
+    result = crop_economics_report(UW_CROPS, UW_RENTS)
+    assert "error" not in result
+    assert result["state"] == "TX"
+    assert len(result["crops_analyzed"]) == 2
+    assert "CORN" in result["crop_details"]
+    assert "COTTON" in result["crop_details"]
+    corn = result["crop_details"]["CORN"]
+    assert corn["stability"] in ("stable", "moderate", "volatile")
+    assert corn["coefficient_of_variation"] is not None
+    return True
+
+def test_crop_econ_hhi():
+    from crop_economics import crop_economics_report
+    result = crop_economics_report(UW_CROPS)
+    hhi = result["diversification"]["hhi"]
+    assert hhi is not None
+    assert result["diversification"]["assessment"] in (
+        "well-diversified", "moderately concentrated", "highly concentrated"
+    )
+    return True
+
+def test_crop_econ_empty():
+    from crop_economics import crop_economics_report
+    result = crop_economics_report([])
+    assert "error" in result
+    return True
+
+def test_crop_econ_rent_trend():
+    from crop_economics import crop_economics_report
+    result = crop_economics_report(UW_CROPS, UW_RENTS)
+    rent = result["rent_analysis"]
+    assert rent is not None
+    assert rent["latest_rent_per_acre"] == 142
+    assert rent["rent_stability"] in ("stable", "rising", "declining")
+    return True
+
+test("Crop economics: full report structure", test_crop_econ_full)
+test("Crop economics: HHI diversification index", test_crop_econ_hhi)
+test("Crop economics: empty input → error dict", test_crop_econ_empty)
+test("Crop economics: rent trend analysis", test_crop_econ_rent_trend)
+
+# --- Exit Analysis unit tests ---
+def test_exit_solar():
+    from exit_analysis import solar_exit_analysis
+    result = solar_exit_analysis(UW_EIA, UW_LAND, UW_RENTS, "TX")
+    assert result["solar_present"] == True
+    assert result["generation_trend"]["total_growth_pct"] > 0
+    premium = result["lease_economics"]["exit_premium_multiple"]
+    assert premium is not None and premium > 1, "Solar should have premium over ag rent"
+    return True
+
+def test_exit_solar_no_data():
+    from exit_analysis import solar_exit_analysis
+    result = solar_exit_analysis([], state="TX")
+    assert "error" in result
+    return True
+
+def test_exit_development_tiers():
+    from exit_analysis import development_exit_analysis
+    low = development_exit_analysis([{"year": 2023, "value_per_acre": 3000}])
+    assert low["development_potential"] == "MINIMAL"
+    high = development_exit_analysis([{"year": 2023, "value_per_acre": 20000}])
+    assert high["development_potential"] == "HIGH"
+    return True
+
+def test_exit_composite():
+    from exit_analysis import exit_optionality_score
+    result = exit_optionality_score(UW_EIA, UW_LAND, UW_RENTS, "TX")
+    assert result["exit_tier"] in ("STRONG", "MODERATE", "LIMITED")
+    assert 0 <= result["composite_score"] <= 100
+    assert "solar" in result["path_scores"]
+    assert "development" in result["path_scores"]
+    assert "conservation" in result["path_scores"]
+    return True
+
+test("Exit: solar analysis with premium", test_exit_solar)
+test("Exit: no solar data → error dict", test_exit_solar_no_data)
+test("Exit: development tier classification", test_exit_development_tiers)
+test("Exit: composite optionality score", test_exit_composite)
+
+# --- Orchestrator: underwrite_deal() ---
+def test_underwrite_full_synthetic():
+    from underwrite import underwrite_deal
+    result = underwrite_deal("TX", UW_LAND, UW_RENTS, UW_CROPS, UW_FRED, UW_EIA)
+    assert result["state"] == "TX"
+    assert result["summary"]["thesis"] in ("FAVORABLE", "MIXED", "UNFAVORABLE")
+    assert "signals" in result["summary"]
+    for section in ["land_values", "cap_rate", "risk", "crop_economics", "exit_optionality"]:
+        assert section in result["sections"], f"Missing section: {section}"
+    assert isinstance(result["data_gaps"], list)
+    assert "data_completeness" in result
+    return True
+
+def test_underwrite_synthesis_signals():
+    from underwrite import underwrite_deal
+    result = underwrite_deal("TX", UW_LAND, UW_RENTS, UW_CROPS, UW_FRED, UW_EIA)
+    signals = result["summary"]["signals"]
+    total = len(signals["bullish"]) + len(signals["bearish"]) + len(signals["neutral"])
+    assert total >= 2, f"Expected >=2 signals, got {total}"
+    return True
+
+def test_underwrite_data_completeness():
+    from underwrite import underwrite_deal
+    result = underwrite_deal("TX", UW_LAND, UW_RENTS, UW_CROPS, UW_FRED, UW_EIA)
+    comp = result["data_completeness"]
+    assert "/5" in comp, f"Expected 'N/5' format, got {comp}"
+    return True
+
+def test_underwrite_real_data():
+    real_path = "/tmp/mmv_initial_fetch/underwriting_TX.json"
+    if not os.path.exists(real_path):
+        return "SKIP: no underwriting_TX.json found"
+    with open(real_path) as f:
+        data = json.load(f)
+    assert data["state"] == "TX"
+    assert data["summary"]["thesis"] in ("FAVORABLE", "MIXED", "UNFAVORABLE")
+    for section in ["land_values", "cap_rate", "risk", "crop_economics", "exit_optionality"]:
+        assert section in data["sections"], f"Missing section: {section}"
+    return True
+
+test("Orchestrator: full underwriting with synthetic data", test_underwrite_full_synthetic)
+test("Orchestrator: synthesis produces >=2 signals", test_underwrite_synthesis_signals)
+test("Orchestrator: data completeness format", test_underwrite_data_completeness)
+test("Orchestrator: real TX data structure (if available)", test_underwrite_real_data)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -606,6 +1026,581 @@ def test_llm_from_real_data():
 
 test("Report from real underwriting_TX.json", test_report_from_real_data)
 test("LLM analyst from real underwriting_TX.json", test_llm_from_real_data)
+
+
+# ════════════════════════════════════════════════════════════════
+# TASK 8: Commercial Property Tools
+# ════════════════════════════════════════════════════════════════
+print("\n" + "═"*60)
+print("  TASK 8: Commercial Property Tools")
+print("═"*60)
+
+# --- Imports ---
+def test_cad_import():
+    return _test_fetcher_import("cad", [
+        "fetch_commercial_properties", "lookup_property", "search_by_owner",
+        "COUNTY_CONFIG", "COMMERCIAL_SPTB_CODES",
+    ])
+
+def test_tx_entities_import():
+    return _test_fetcher_import("tx_entities", [
+        "search_entity", "get_entity_details", "check_franchise_tax_status",
+    ])
+
+def test_sec_edgar_import():
+    return _test_fetcher_import("sec_edgar", [
+        "search_filings", "get_company_filings", "search_tx_reits",
+        "build_user_agent", "TX_COMMERCIAL_REITS",
+    ])
+
+def test_fema_import():
+    return _test_fetcher_import("fema", [
+        "lookup_flood_zone", "lookup_flood_zone_by_address",
+        "classify_flood_risk", "FLOOD_ZONE_RISK",
+    ])
+
+def test_tamu_import():
+    return _test_fetcher_import("tamu_realestate", [
+        "fetch_market_reports", "list_available_reports",
+        "build_report_url", "REPORT_CATALOG",
+    ])
+
+test("cad.py imports (CAD property data)", test_cad_import)
+test("tx_entities.py imports (entity research)", test_tx_entities_import)
+test("sec_edgar.py imports (SEC EDGAR)", test_sec_edgar_import)
+test("fema.py imports (flood zone)", test_fema_import)
+test("tamu_realestate.py imports (TX A&M)", test_tamu_import)
+
+# --- CAD Parser Tests ---
+def test_cad_parse_hcad_real_acct():
+    from cad import _parse_hcad_real_acct
+    mock_tsv = "ACCT\tYR\tOWNER\tSITE_ADDR_1\tSTATE_CLASS\tLAND_VAL\tBLDG_VAL\tTOT_MKT_VAL\tTOT_APPR_VAL\tASSESSED_VAL\tX_FEATURES_VAL\tADDR1\tADDR2\tCITY\tSTATE\tZIP\tSITE_ADDR_2\tSITE_ADDR_3\tLEGAL1\tLEGAL2\n"
+    mock_tsv += "1234567890123\t2025\tBROOKFIELD ASSET MGMT\t1000 MAIN ST\tF1\t5000000\t15000000\t20000000\t19500000\t19500000\t500000\t\t\t\t\t\t\t\tLOT 1 BLK 2\tSOME ADDITION\n"
+    mock_tsv += "9876543210987\t2025\tSMITH JOHN\t500 ELM ST\tA1\t200000\t150000\t350000\t340000\t340000\t0\t\t\t\t\t\t\t\tLOT 5\t\n"
+
+    results = _parse_hcad_real_acct(mock_tsv)
+    assert len(results) == 2, f"Expected 2 records, got {len(results)}"
+    assert results[0]["account_number"] == "1234567890123"
+    assert results[0]["owner_name"] == "BROOKFIELD ASSET MGMT"
+    assert results[0]["sptb_code"] == "F1"
+    assert results[0]["total_market_value"] == 20000000
+    assert results[0]["land_value"] == 5000000
+    assert results[0]["building_value"] == 15000000
+    return True
+
+def test_cad_classify_property_type():
+    from cad import _classify_property_type
+    assert _classify_property_type("F1") == "commercial"
+    assert _classify_property_type("F1A") == "commercial"
+    assert _classify_property_type("F2") == "industrial"
+    assert _classify_property_type("B1") == "multifamily"
+    assert _classify_property_type("A1") == "residential"
+    assert _classify_property_type("D1") == "agricultural"
+    assert _classify_property_type("C1") == "vacant_land"
+    assert _classify_property_type("") == "unknown"
+    return True
+
+def test_cad_parse_building_other():
+    from cad import _parse_hcad_building_other
+    mock_tsv = "ACCT\tBLD_NUM\tIMPR_TP\tYR_BUILT\tGROSS_AR\tEFF_AR\tSTORIES\tCOND\tGRADE\n"
+    mock_tsv += "1234567890123\t1\tOFFICE\t1998\t50000\t48000\t5\tGOOD\tA\n"
+    mock_tsv += "1234567890123\t2\tPARKING\t1998\t20000\t20000\t3\tAVG\tB\n"
+
+    buildings = _parse_hcad_building_other(mock_tsv)
+    assert "1234567890123" in buildings
+    assert len(buildings["1234567890123"]) == 2
+    assert buildings["1234567890123"][0]["year_built"] == 1998
+    assert buildings["1234567890123"][0]["gross_area_sqft"] == 50000
+    assert buildings["1234567890123"][0]["num_stories"] == 5.0
+    assert buildings["1234567890123"][0]["grade"] == "A"
+    return True
+
+def test_cad_safe_int():
+    from cad import _safe_int, _safe_float
+    assert _safe_int("1,234,567") == 1234567
+    assert _safe_int("(D)") is None
+    assert _safe_int(None) is None
+    assert _safe_int("") is None
+    assert _safe_int("3.14") == 3
+    assert _safe_float("3.14") == 3.14
+    assert _safe_float(None) is None
+    return True
+
+def test_cad_county_config():
+    from cad import COUNTY_CONFIG
+    assert "harris" in COUNTY_CONFIG
+    assert COUNTY_CONFIG["harris"]["has_bulk"] == True
+    assert "travis" in COUNTY_CONFIG
+    assert COUNTY_CONFIG["travis"]["has_bulk"] == False
+    for county, config in COUNTY_CONFIG.items():
+        assert "name" in config, f"Missing 'name' in {county}"
+    return True
+
+def test_cad_unsupported_county():
+    from cad import fetch_commercial_properties
+    result = fetch_commercial_properties(county="nonexistent")
+    assert isinstance(result, dict)
+    assert "provenance" in result
+    data = result.get("value", [])
+    assert len(data) == 0
+    return True
+
+test("CAD: parse HCAD real_acct mock TSV", test_cad_parse_hcad_real_acct)
+test("CAD: classify SPTB property types", test_cad_classify_property_type)
+test("CAD: parse building_other mock TSV", test_cad_parse_building_other)
+test("CAD: _safe_int and _safe_float edge cases", test_cad_safe_int)
+test("CAD: county config completeness", test_cad_county_config)
+test("CAD: unsupported county returns empty", test_cad_unsupported_county)
+
+# --- Entity Research Tests ---
+def test_entities_no_key_graceful():
+    old = os.environ.pop("OPENCORPORATES_API_KEY", "")
+    try:
+        import tx_entities
+        importlib.reload(tx_entities)
+        result = tx_entities.search_entity("TEST LLC")
+    finally:
+        if old:
+            os.environ["OPENCORPORATES_API_KEY"] = old
+    assert isinstance(result, dict)
+    assert "provenance" in result
+    data = result.get("value", [])
+    assert len(data) == 0, "Should return empty without API key"
+    return True
+
+def test_entities_parse_comptroller():
+    from tx_entities import _parse_comptroller_results
+    mock_html = """
+    <table>
+    <tr><td>12345678901</td><td>TEST LLC</td><td>HOUSTON TX</td><td>Active</td></tr>
+    <tr><td>98765432109</td><td>ANOTHER LLC</td><td>DALLAS TX</td><td>Forfeited</td></tr>
+    </table>
+    """
+    results = _parse_comptroller_results(mock_html, "TEST LLC")
+    assert len(results) == 2
+    assert results[0]["taxpayer_number"] == "12345678901"
+    assert results[0]["taxpayer_name"] == "TEST LLC"
+    assert results[0]["right_to_transact"] == "Active"
+    assert results[1]["right_to_transact"] == "Forfeited"
+    return True
+
+def test_entities_empty_comptroller():
+    from tx_entities import _parse_comptroller_results
+    results = _parse_comptroller_results("No matching records found", "NONEXISTENT")
+    assert len(results) == 0
+    return True
+
+test("Entities: no API key → graceful empty", test_entities_no_key_graceful)
+test("Entities: parse Comptroller HTML results", test_entities_parse_comptroller)
+test("Entities: empty Comptroller response", test_entities_empty_comptroller)
+
+# --- SEC EDGAR Tests ---
+def test_edgar_user_agent():
+    from sec_edgar import build_user_agent, SEC_USER_AGENT
+    ua = build_user_agent("TestApp", "test@example.com")
+    assert "TestApp" in ua
+    assert "test@example.com" in ua
+    assert "(" in ua and ")" in ua, "SEC requires email in parentheses"
+    assert "MMV-Data-Pipeline" in SEC_USER_AGENT
+    return True
+
+def test_edgar_reits_catalog():
+    from sec_edgar import TX_COMMERCIAL_REITS
+    assert len(TX_COMMERCIAL_REITS) >= 3
+    for cik, info in TX_COMMERCIAL_REITS.items():
+        assert "name" in info, f"Missing 'name' for CIK {cik}"
+        assert "type" in info, f"Missing 'type' for CIK {cik}"
+        assert len(cik) >= 7, f"CIK too short: {cik}"
+    return True
+
+test("EDGAR: User-Agent format compliance", test_edgar_user_agent)
+test("EDGAR: TX REIT catalog completeness", test_edgar_reits_catalog)
+
+# --- FEMA Flood Zone Tests ---
+def test_fema_classify_risk():
+    from fema import classify_flood_risk, FLOOD_ZONE_RISK
+    assert classify_flood_risk("AE") == "high"
+    assert classify_flood_risk("VE") == "very_high"
+    assert classify_flood_risk("X") == "low"
+    assert classify_flood_risk("A") == "high"
+    assert classify_flood_risk("D") == "unknown"
+    assert classify_flood_risk("") == "unknown"
+    assert classify_flood_risk("NONEXISTENT") == "unknown"
+    return True
+
+def test_fema_zone_catalog():
+    from fema import FLOOD_ZONE_RISK
+    assert len(FLOOD_ZONE_RISK) >= 10
+    for zone, info in FLOOD_ZONE_RISK.items():
+        assert "risk" in info, f"Missing 'risk' for zone {zone}"
+        assert "description" in info, f"Missing 'description' for zone {zone}"
+        assert info["risk"] in ("very_high", "high", "moderate", "low", "unknown", "unmapped")
+    return True
+
+test("FEMA: flood risk classification", test_fema_classify_risk)
+test("FEMA: zone catalog completeness", test_fema_zone_catalog)
+
+# --- TX A&M Real Estate Center Tests ---
+def test_tamu_report_catalog():
+    from tamu_realestate import REPORT_CATALOG, RECENTER_BASE_URL
+    assert len(REPORT_CATALOG) >= 5
+    for key, info in REPORT_CATALOG.items():
+        assert "url" in info, f"Missing 'url' for {key}"
+        assert "description" in info, f"Missing 'description' for {key}"
+        assert info["url"].startswith("https://"), f"Invalid URL for {key}"
+    return True
+
+def test_tamu_build_url():
+    from tamu_realestate import build_report_url
+    url = build_report_url("Houston", "office")
+    assert "houston" in url
+    assert "office" in url
+    assert url.startswith("https://")
+
+    url2 = build_report_url("San Antonio", "retail")
+    assert "san-antonio" in url2
+    assert "retail" in url2
+    return True
+
+def test_tamu_list_reports():
+    from tamu_realestate import list_available_reports
+    result = list_available_reports()
+    assert isinstance(result, dict)
+    assert "provenance" in result
+    data = result.get("value", [])
+    assert len(data) >= 5
+    for r in data:
+        assert "report_key" in r
+        assert "url" in r
+    return True
+
+def test_tamu_table_extractor():
+    from tamu_realestate import _extract_tables
+    html = """
+    <table>
+    <tr><th>Metro</th><th>Vacancy</th><th>Rent</th></tr>
+    <tr><td>Houston</td><td>18.5%</td><td>$32.50</td></tr>
+    <tr><td>Dallas</td><td>15.2%</td><td>$35.00</td></tr>
+    </table>
+    """
+    tables = _extract_tables(html)
+    assert len(tables) == 1
+    assert tables[0]["headers"] == ["Metro", "Vacancy", "Rent"]
+    assert len(tables[0]["data"]) == 2
+    assert tables[0]["data"][0][0] == "Houston"
+    return True
+
+def test_tamu_metric_parser():
+    from tamu_realestate import _parse_market_report
+    mock_html = """
+    <html><head><title>Houston Office Market Q4 2025</title></head>
+    <body><article>
+    <p>The Houston office vacancy rate was 19.2 percent in Q4 2025,
+    with an average lease rate of $31.50 per square foot.
+    Net absorption totaled 1,250,000 square feet.
+    The capitalization rate averaged 7.5 percent.</p>
+    </article></body></html>
+    """
+    result = _parse_market_report(mock_html, "Houston", "office")
+    assert result["title"] == "Houston Office Market Q4 2025"
+    metrics = result.get("metrics", {})
+    assert metrics.get("vacancy_rate_pct") == 19.2, f"Expected 19.2, got {metrics.get('vacancy_rate_pct')}"
+    assert metrics.get("avg_lease_rate_psf") == 31.50
+    assert metrics.get("absorption_sqft") == 1250000
+    assert metrics.get("cap_rate_pct") == 7.5
+    return True
+
+test("TAMU: report catalog completeness", test_tamu_report_catalog)
+test("TAMU: URL builder for metros", test_tamu_build_url)
+test("TAMU: list_available_reports structure", test_tamu_list_reports)
+test("TAMU: HTML table extractor", test_tamu_table_extractor)
+test("TAMU: metric parser (vacancy, rent, absorption, cap rate)", test_tamu_metric_parser)
+
+
+
+# ════════════════════════════════════════════════════════════════
+# TASK 8: Excel Model Integration
+# ════════════════════════════════════════════════════════════════
+print("\n" + "═"*60)
+print("  TASK 8: Excel Model Parser")
+print("═"*60)
+
+import tempfile
+
+def _create_test_workbook(path=None):
+    """Create a standard test workbook for parser/mapper/executor tests."""
+    import openpyxl as _xl
+    wb = _xl.Workbook()
+    ws = wb.active
+    ws.title = "Deal Model"
+    ws["A1"] = "Test Deal Model"
+    ws["B4"] = "Purchase Price"
+    ws["C4"] = 1200000
+    ws["C4"].number_format = "$#,##0"
+    ws["B5"] = "Total Acres"
+    ws["C5"] = 500
+    ws["B6"] = "Cash Rent ($/acre)"
+    ws["C6"] = 185
+    ws["B7"] = "Appreciation Rate"
+    ws["C7"] = 0.03
+    ws["C7"].number_format = "0.00%"
+    ws["B8"] = "Discount Rate"
+    ws["C8"] = 0.08
+    ws["C8"].number_format = "0.00%"
+    ws["B11"] = "Price per Acre"
+    ws["C11"] = "=C4/C5"
+    ws["B12"] = "Gross Income"
+    ws["C12"] = "=C6*C5"
+    ws["B13"] = "Cap Rate"
+    ws["C13"] = "=C12/C4"
+    ws["C13"].number_format = "0.00%"
+    ws["B14"] = "NOI"
+    ws["C14"] = "=C12*0.85"
+    if path is None:
+        path = os.path.join(tempfile.gettempdir(), "mmv_test_model.xlsx")
+    wb.save(path)
+    wb.close()
+    return path
+
+def test_parser_import():
+    from excel_parser import parse_excel_model
+    return True
+
+def test_parser_basic():
+    from excel_parser import parse_excel_model
+    path = _create_test_workbook()
+    result = parse_excel_model(path)
+    assert "error" not in result, f"Parser error: {result.get('error')}"
+    assert result["summary"]["input_count"] == 5, f"Expected 5 inputs, got {result['summary']['input_count']}"
+    assert result["summary"]["formula_count"] == 4, f"Expected 4 formulas, got {result['summary']['formula_count']}"
+    return True
+
+def test_parser_classifies_inputs():
+    from excel_parser import parse_excel_model
+    path = _create_test_workbook()
+    result = parse_excel_model(path)
+    input_addrs = [c["address"] for c in result["input_cells"]]
+    for expected in ["C4", "C5", "C6", "C7", "C8"]:
+        assert expected in input_addrs, f"Missing input: {expected}"
+    return True
+
+def test_parser_classifies_formulas():
+    from excel_parser import parse_excel_model
+    path = _create_test_workbook()
+    result = parse_excel_model(path)
+    formula_addrs = [c["address"] for c in result["formula_cells"]]
+    for expected in ["C11", "C12", "C13", "C14"]:
+        assert expected in formula_addrs, f"Missing formula: {expected}"
+    return True
+
+def test_parser_extracts_labels():
+    from excel_parser import parse_excel_model
+    path = _create_test_workbook()
+    result = parse_excel_model(path)
+    labels = {c["address"]: c.get("label") for c in result["input_cells"]}
+    assert labels.get("C4") == "Purchase Price", f"C4 label: {labels.get('C4')}"
+    assert labels.get("C6") == "Cash Rent ($/acre)", f"C6 label: {labels.get('C6')}"
+    return True
+
+def test_parser_missing_file():
+    from excel_parser import parse_excel_model
+    result = parse_excel_model("/nonexistent/model.xlsx")
+    assert "error" in result
+    return True
+
+def test_parser_wrong_extension():
+    from excel_parser import parse_excel_model
+    result = parse_excel_model("/tmp/test.csv")
+    assert "error" in result
+    assert "Unsupported" in result["error"]
+    return True
+
+def test_parser_multisheet():
+    import openpyxl as _xl
+    wb = _xl.Workbook()
+    ws1 = wb.active
+    ws1.title = "Assumptions"
+    ws1["A1"] = "Rate"
+    ws1["B1"] = 0.05
+    ws2 = wb.create_sheet("Outputs")
+    ws2["A1"] = "Result"
+    ws2["B1"] = "=Assumptions!B1*2"
+    path = os.path.join(tempfile.gettempdir(), "mmv_multi.xlsx")
+    wb.save(path)
+    wb.close()
+    from excel_parser import parse_excel_model
+    result = parse_excel_model(path)
+    assert result["summary"]["total_sheets"] == 2, f"Expected 2 sheets, got {result['summary']['total_sheets']}"
+    return True
+
+test("Excel parser module imports", test_parser_import)
+test("Parser: basic .xlsx with values and formulas", test_parser_basic)
+test("Parser: correctly classifies input cells", test_parser_classifies_inputs)
+test("Parser: correctly classifies formula cells", test_parser_classifies_formulas)
+test("Parser: extracts labels from adjacent text", test_parser_extracts_labels)
+test("Parser: handles missing file gracefully", test_parser_missing_file)
+test("Parser: rejects non-.xlsx files", test_parser_wrong_extension)
+test("Parser: multi-sheet workbook", test_parser_multisheet)
+
+
+print("\n" + "═"*60)
+print("  TASK 9: Excel Model Mapper")
+print("═"*60)
+
+def test_mapper_import():
+    from model_mapper import map_excel_model, CONCEPT_VOCABULARY
+    assert len(CONCEPT_VOCABULARY) >= 25, f"Expected >= 25 concepts, got {len(CONCEPT_VOCABULARY)}"
+    return True
+
+def test_mapper_purchase_price():
+    from model_mapper import map_excel_model
+    skeleton = {"input_cells": [{"address": "C4", "value": 1000000, "label": "Purchase Price", "sheet": "S"}], "formula_cells": []}
+    result = map_excel_model(skeleton, force_deterministic=True)
+    assert result["mapped_inputs"]["C4"]["concept"] == "purchase_price"
+    return True
+
+def test_mapper_cash_rent():
+    from model_mapper import map_excel_model
+    skeleton = {"input_cells": [{"address": "C6", "value": 185, "label": "Cash Rent ($/acre)", "sheet": "S"}], "formula_cells": []}
+    result = map_excel_model(skeleton, force_deterministic=True)
+    assert result["mapped_inputs"]["C6"]["concept"] == "cash_rent_per_acre", \
+        f"Got {result['mapped_inputs']['C6']['concept']} instead of cash_rent_per_acre"
+    return True
+
+def test_mapper_irr_formula():
+    from model_mapper import map_excel_model
+    skeleton = {"input_cells": [], "formula_cells": [{"address": "D10", "formula": "=XIRR(C2:C10,B2:B10)", "label": None, "sheet": "S"}]}
+    result = map_excel_model(skeleton, force_deterministic=True)
+    assert result["mapped_outputs"]["D10"]["concept"] == "irr"
+    return True
+
+def test_mapper_model_type():
+    from model_mapper import map_excel_model
+    skeleton = {
+        "input_cells": [{"address": "C4", "value": 100, "label": "Purchase Price", "sheet": "S"}],
+        "formula_cells": [{"address": "C10", "formula": "=C5/C4", "label": "Cap Rate", "sheet": "S"}],
+    }
+    result = map_excel_model(skeleton, force_deterministic=True)
+    assert "direct_capitalization" in result["model_type"]
+    return True
+
+def test_mapper_mmv_sources():
+    from model_mapper import map_excel_model
+    skeleton = {"input_cells": [
+        {"address": "C4", "value": 185, "label": "Cash Rent", "sheet": "S"},
+        {"address": "C5", "value": 0.08, "label": "Discount Rate", "sheet": "S"},
+    ], "formula_cells": []}
+    result = map_excel_model(skeleton, force_deterministic=True)
+    tool_names = [s["tool"] for s in result["mmv_data_sources"]]
+    assert "fetch_cash_rents" in tool_names, f"Missing fetch_cash_rents in {tool_names}"
+    assert "fetch_interest_rates" in tool_names, f"Missing fetch_interest_rates in {tool_names}"
+    return True
+
+def test_mapper_unknown_label():
+    from model_mapper import map_excel_model
+    skeleton = {"input_cells": [{"address": "C4", "value": 42, "label": "ZZZ Unknown Field", "sheet": "S"}], "formula_cells": []}
+    result = map_excel_model(skeleton, force_deterministic=True)
+    assert len(result["unmapped_cells"]) == 1
+    assert result["total_unmapped"] == 1
+    return True
+
+def test_mapper_empty_skeleton():
+    from model_mapper import map_excel_model
+    result = map_excel_model({"input_cells": [], "formula_cells": []})
+    assert "error" in result
+    return True
+
+test("Mapper module imports + vocabulary", test_mapper_import)
+test("Mapper: 'Purchase Price' → purchase_price", test_mapper_purchase_price)
+test("Mapper: 'Cash Rent ($/acre)' → cash_rent_per_acre", test_mapper_cash_rent)
+test("Mapper: =XIRR() formula → irr", test_mapper_irr_formula)
+test("Mapper: detects direct_capitalization model type", test_mapper_model_type)
+test("Mapper: maps concepts to MMV data sources", test_mapper_mmv_sources)
+test("Mapper: unknown label → unmapped_cells", test_mapper_unknown_label)
+test("Mapper: empty skeleton → error", test_mapper_empty_skeleton)
+
+
+print("\n" + "═"*60)
+print("  TASK 10: Excel Model Executor")
+print("═"*60)
+
+def test_executor_import():
+    from model_executor import populate_excel_model, read_excel_outputs
+    return True
+
+def test_executor_populates():
+    from model_executor import populate_excel_model
+    path = _create_test_workbook()
+    schema = {"mapped_inputs": {
+        "C4": {"concept": "purchase_price", "value": 1200000, "sheet": "Deal Model"},
+        "C6": {"concept": "cash_rent_per_acre", "value": 185, "sheet": "Deal Model"},
+    }, "mapped_outputs": {}}
+    data = {"purchase_price": 1500000, "cash_rent_per_acre": 195}
+    result = populate_excel_model(path, schema, data)
+    assert "error" not in result, f"Executor error: {result.get('error')}"
+    assert result["summary"]["written"] == 2
+    assert os.path.exists(result["output_file"])
+    return True
+
+def test_executor_preserves_formulas():
+    import openpyxl as _xl
+    from model_executor import populate_excel_model
+    path = _create_test_workbook()
+    schema = {"mapped_inputs": {"C4": {"concept": "purchase_price", "value": 1200000, "sheet": "Deal Model"}}, "mapped_outputs": {}}
+    data = {"purchase_price": 1500000}
+    result = populate_excel_model(path, schema, data)
+    wb = _xl.load_workbook(result["output_file"])
+    ws = wb["Deal Model"]
+    assert ws["C4"].value == 1500000, f"C4 should be 1500000, got {ws['C4'].value}"
+    assert ws["C11"].value == "=C4/C5", f"C11 formula should be preserved, got {ws['C11'].value}"
+    wb.close()
+    return True
+
+def test_executor_skips_missing_data():
+    from model_executor import populate_excel_model
+    path = _create_test_workbook()
+    schema = {"mapped_inputs": {
+        "C4": {"concept": "purchase_price", "value": 1200000, "sheet": "Deal Model"},
+        "C5": {"concept": "total_acres", "value": 500, "sheet": "Deal Model"},
+    }, "mapped_outputs": {}}
+    data = {"purchase_price": 1500000}  # total_acres not provided
+    result = populate_excel_model(path, schema, data)
+    assert result["summary"]["written"] == 1
+    assert result["summary"]["skipped"] == 1
+    assert result["cells_skipped"][0]["concept"] == "total_acres"
+    return True
+
+def test_executor_missing_file():
+    from model_executor import populate_excel_model
+    result = populate_excel_model("/nonexistent.xlsx", {"mapped_inputs": {}}, {})
+    assert "error" in result
+    return True
+
+def test_executor_no_inputs():
+    from model_executor import populate_excel_model
+    path = _create_test_workbook()
+    result = populate_excel_model(path, {"mapped_inputs": {}}, {})
+    assert "error" in result
+    return True
+
+def test_executor_old_values_tracked():
+    from model_executor import populate_excel_model
+    path = _create_test_workbook()
+    schema = {"mapped_inputs": {"C4": {"concept": "purchase_price", "value": 1200000, "sheet": "Deal Model"}}, "mapped_outputs": {}}
+    data = {"purchase_price": 1500000}
+    result = populate_excel_model(path, schema, data)
+    cell = result["cells_written"][0]
+    assert cell["old_value"] == 1200000, f"Old value should be tracked: {cell}"
+    assert cell["new_value"] == 1500000
+    return True
+
+test("Executor module imports", test_executor_import)
+test("Executor: populates input cells", test_executor_populates)
+test("Executor: preserves formula cells", test_executor_preserves_formulas)
+test("Executor: skips concepts with missing data", test_executor_skips_missing_data)
+test("Executor: handles missing file", test_executor_missing_file)
+test("Executor: rejects empty mapped_inputs", test_executor_no_inputs)
+test("Executor: tracks old → new values", test_executor_old_values_tracked)
 
 
 # ════════════════════════════════════════════════════════════════

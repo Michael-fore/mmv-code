@@ -15,12 +15,12 @@ description: Core architecture rules and constraints for the MMV platform
 - **Long-running tasks**: For potentially long-running jobs (multi-step LLM chains, batch processing, large data pipelines), use **Cloud Run Jobs** instead of Cloud Functions.
 
 ## Data & OLAP
-- **Primary database: Cloud SQL PostgreSQL** (managed, serverless-friendly).
+- **Primary database: Cloud SQL PostgreSQL** (Google-managed, serverless-friendly).
   - Each data source gets its own flat table.
   - Always query the data to understand its shape before building.
 - **Raw data**: Always land in GCS first, then load into PostgreSQL.
-- **No API keys**: Use public data sources with downloadable CSVs / scrapeable pages.
-- **ClickHouse on GCE**: Available for heavy analytics later (scripts in `mmv-infra/clickhouse/`).
+- **Free API keys are fine**: If data requires a free API key (USDA NASS, FRED, EIA, etc.), register and use one. Avoid paid/proprietary data sources unless explicitly approved.
+- **ClickHouse on GCE**: Available as a secondary OLAP layer for heavy analytics (scripts in `mmv-infra/clickhouse/`). PostgreSQL remains the primary datastore.
 - **BigQuery**: Avoid unless query volume is very low.
 
 ## API & Function Design
@@ -38,3 +38,10 @@ description: Core architecture rules and constraints for the MMV platform
 - **Primary model: Gemini** — use for most tasks (cheap, fast, good enough).
 - **Complex reasoning: Claude Opus** — use for tasks requiring deep analysis or nuanced judgment.
 - Always include deterministic fallbacks where possible.
+- **LLMs in the cold path only** — never call an LLM during a live scan/query. LLMs feed data pipelines (alias discovery, entity resolution) async and offline; the hot path uses deterministic lookups only.
+
+## Data Enrichment & Signal Pattern
+- **Signal Provider pattern** for all prospect scoring enrichment. Each data source (DB table, external API, client CRM) is a standalone `SignalProvider` module that fetches by `account_number` and returns scored sub-dimensions. New sources register with the registry — the core scanner query is never modified.
+- **Canonical vocabulary** is the single source of truth in `signals/canonical_vocab.py`. All ingest scripts and signal providers map to it. Unknown terms are logged to `unmapped_terms` table, never silently dropped.
+- **Vocab resolution job** runs: (1) immediately on new source registration, (2) nightly sweep, (3) on-demand CLI. LLM proposes additions; high-confidence mappings auto-commit, ambiguous ones queue for human review.
+- **Entity name resolution** is pre-computed at ingest time into an `entity_aliases` table. Never do fuzzy string matching in the hot path.

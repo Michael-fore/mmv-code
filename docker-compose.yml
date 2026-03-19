@@ -1,0 +1,54 @@
+# MMV — Local dev stack
+#
+# Usage:
+#   docker compose up tools          # start tool service only
+#   docker compose up                # start everything
+#
+# Prerequisites:
+#   1. Cloud SQL proxy running on host: cloud-sql-proxy mmv-cloud:us-central1:mmv-postgres &
+#   2. Service account key at ~/mmv-cloud-llm-agent-key.json
+
+services:
+
+  tools:
+    build:
+      context: ./tools
+      dockerfile: Dockerfile
+    image: mmv-tool-service
+    container_name: mmv-tools
+    ports:
+      - "8001:8001"
+    volumes:
+      # Mount entire MMV root so the service can import from all repos
+      - .:/app
+    working_dir: /app
+    environment:
+      # DB — connect to Cloud SQL proxy running on host
+      DB_HOST: host.docker.internal
+      DB_PORT: "5432"
+      DB_NAME: mmv
+      DB_USER: mmv-agent
+      DB_PASS: "${DB_PASS}"
+      # GCP credentials
+      GOOGLE_APPLICATION_CREDENTIALS: /app/mmv-cloud-llm-agent-key.json
+      CLOUD_SQL_INSTANCE: mmv-cloud:us-central1:mmv-postgres
+      # Other
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+    extra_hosts:
+      # Allows container to reach host's Cloud SQL proxy at 127.0.0.1
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # Optional: Node frontend (usually run directly with `node server.js`)
+  # node:
+  #   image: node:20-alpine
+  #   working_dir: /app
+  #   volumes:
+  #     - ./mmv-front:/app
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     TOOL_SERVICE_URL: "http://tools:8001"
+  #   depends_on:
+  #     - tools
+  #   command: node server.js

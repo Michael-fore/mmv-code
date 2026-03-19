@@ -21,3 +21,8 @@ Also read these workflows at `/Users/tako/projects/ai-playground/MMV/.agent/work
 - `domain-structure.md` — which repo code belongs in
 - `data-rules.md` — how to fetch and store data
 - `rules.md` — cross-repo interface rules
+
+And these `.agent/` reference docs:
+- `ARCHITECTURE.md` (repo root) — **operational "how it runs today"**: service ports, data flow, repo map, GCP infra
+- `.agent/CONVENTIONS.md` — **code contracts**: tool return shape, DB patterns, manifest rules, logging
+- `.agent/GLOSSARY.md` — **domain terms**: SPTB codes, HCAD, SFHA, cap rate, deed types, etc.
