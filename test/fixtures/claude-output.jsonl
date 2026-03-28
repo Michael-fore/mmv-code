@@ -1,0 +1,6 @@
+{"type": "thinking", "content": "Let me analyze the user's request..."}
+{"type": "thinking", "content": "I should create a plan with two phases."}
+{"type": "text", "content": "## Phase 1: Setup\n\n- [ ] Create config file\n- [ ] Install dependencies"}
+{"type": "tool_use", "name": "create_file", "input": {"path": "src/config.ts", "content": "export const config = {};"}}
+{"type": "text", "content": "\n\n## Phase 2: Implementation\n\n- [ ] Build main module\n- [ ] Add tests"}
+{"type": "result", "content": "I've created a two-phase plan for your project."}

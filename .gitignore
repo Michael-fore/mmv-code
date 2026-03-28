@@ -1,3 +1,9 @@
 .github_pat
 .env
 .gcloud-config/
+
+# VS Code Extension
+node_modules/
+dist/
+out/
+*.vsix

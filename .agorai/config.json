@@ -1,0 +1,5 @@
+{
+  "plannerModel": "claude-opus-4-6",
+  "executorModel": "claude-sonnet-4-6",
+  "maxParallelExecutors": 4
+}

@@ -1,0 +1,60 @@
+{
+  "name": "agorai-agent-manager",
+  "displayName": "Agorai Agent Manager",
+  "description": "Orchestrate AI planning and code execution agents",
+  "version": "0.1.0",
+  "publisher": "agorai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "onCommand:agorai.openManager"
+  ],
+  "main": "./dist/extension/index.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "agorai.openManager",
+        "title": "Agorai: Open Agent Manager"
+      },
+      {
+        "command": "agorai.newSession",
+        "title": "Agorai: New Planning Session"
+      },
+      {
+        "command": "agorai.planAndExecute",
+        "title": "Agorai: Plan & Execute"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "agorai.openManager",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a"
+      },
+      {
+        "command": "agorai.newSession",
+        "key": "ctrl+shift+n",
+        "mac": "cmd+shift+n"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  }
+}

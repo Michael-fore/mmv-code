@@ -1,0 +1,10 @@
+src/**
+test/**
+node_modules/**
+.agorai/**
+.agent/**
+.github/**
+*.md
+!dist/**
+esbuild.config.mjs
+tsconfig.json
